@@ -1,25 +1,209 @@
 ---
-title: "Reproducible Research: Peer Assessment 1"
-output: 
+title: 'Reproducible Research: Assigment 1'
+author: "Matthias S"
+date: "Wednesday, September 16, 2015"
+output:
   html_document:
-    keep_md: true
+    number_sections: yes
+    toc: yes
+  pdf_document:
+    number_sections: yes
+    toc: yes
 ---
 
+# Introduction
 
-## Loading and preprocessing the data
+This report is written to fulfill assignemnt 1 of the Reproducible Research course. The data and assignemnt was downloaded from [Pr Roger D. Peng's Github repository](https://github.com/rdpeng/RepData_PeerAssessment1).
+
+# Useful ressources
+
+Following ressources were used to write this report:
+
+- [R Markdown v2](http://rmarkdown.rstudio.com/);
+- [R Markdown Reference Guide](https://www.rstudio.com/wp-content/uploads/2015/03/rmarkdown-reference.pdf);
+- [R Markdown Cheat Sheet](https://www.rstudio.com/wp-content/uploads/2015/02/rmarkdown-cheatsheet.pdf);
+- And lots of Googling ...
+
+# Loading and preprocessing the data
+
+This report is configured in such a way that the directory containing it can be downloaded from [my Gihub repository](https://github.com/matsti/RepData_PeerAssessment1) onto any folder where the code will be available along the compressed data used to produce the report.
+
+Reading the data:
+
+```{r}
+unzip("activity.zip")
+stepsdate <- read.csv("activity.csv")
+str(stepsdate)
+```
+
+The date in the data above is in factor format, so I will convert it to date format using the package lubridate:
+
+```{r}
+library(lubridate)
+stepsdate$date <- ymd(stepsdate$date)
+```
+
+The interval data is in format *hhmm* with no leading zeros, so I do the following:
+
+* Pad it out to 4 integers with a semi-colon in the middle, which implies converting the field to character;
+* Convert the string using the function hm from lubridate which yields an object of class period.
+
+```{r}
+tmp <- sprintf("%02d:%02d", stepsdate$interval%/%100, stepsdate$interval%%100)
+stepsdate$timeperiod <- hm(tmp)
+head(stepsdate)
+```
+
+# What is the mean total number of steps taken per day?
+
+For convenience I'll display the histogram after the caluculations. I start by calculating the sum of the steps taken each day, together with mean and median, using the plyr package for convenience:
+
+```{r, message=FALSE, warning=FALSE}
+library(plyr)
+ddply(stepsdate, "date", summarize,
+                        meanstepcount = sum(steps, na.rm = TRUE),
+                        maxstep = max(steps[steps>0], na.rm = TRUE),
+                        stepmean = round(mean(steps, na.rm = TRUE), 1),
+                        stepmedian = median(steps[steps>0], na.rm = TRUE))
+```
+
+In the above output, the option message=FALSE has been set to suppress the message that loading plyer masks object here (whathever that means ...) and the warning=FALSE to suppress the warnings for max values when no step data is available (in which case the output is -Inf).
+
+The histogram of the total number of steps taken each day discarding the missing values is below:
+
+```{r}
+stepsday <- ddply(stepsdate, "date", summarize,
+                        meanstepcount = sum(steps, na.rm = TRUE))
+meansteps = round(mean(stepsday$meanstepcount), 1)
+mediansteps = median(stepsday$meanstepcount)
+hist(stepsday$meanstepcount,
+     main = "Total number of steps taken each day",
+     xlab = "Total number of steps",
+     ylab = "Frequency",
+     col = "grey90")
+abline(v=meansteps,col="red")
+abline(v=mediansteps,col="green")
+legend("topright",
+       c("total number of steps",
+         paste("mean ",meansteps),
+         paste("median",mediansteps)),
+       col = c("black", "red", "green"),
+       lty = c(0, 1, 1),
+       lwd = c(0, 1, 1),
+       pch = c(22, NA, NA),
+       pt.bg = c("grey90", NA, NA),
+       pt.cex = c(3, NA, NA),
+       pt.lw = c(1.1, NA, NA),
+       bty="n")
+```
+
+The mean and median function return `r meansteps` and `r mediansteps` repectively.
 
 
 
-## What is mean total number of steps taken per day?
+# What is the average daily activity pattern?
+
+Below is a time series plot (i.e. type = "l") of the 5-minute interval (x-axis) and the average number of steps taken, averaged across all days (y-axis). This turned out to be trickier than first thought:
+
+- The converted intervals *timeperiod* of class period can not be directly used with plot. Instead, a perhour column was added whereby the date remains the same and the intervals are added to create the time intervals over the same day, which I have arbitrarely set to the first avaiable date in the *date* variable.
+- The default addition uses the timezone GMT but plot does not check for timezone and simply uses the machine's default, which means that I need to insure that the dates and intervals are added using the machine's timezone as hte time scale will be out of sync if the two timezones are different.
+
+The advantage is that the x axis is now on a time scale.
+```{r}
+stepsdate$dailyinterval <- ymd(stepsdate$date[1], tz = Sys.timezone()) + stepsdate$timeperiod
+head(stepsdate$dailyinterval)
+stepsday <- ddply(stepsdate, "dailyinterval", summarize,
+                        stepaverage = mean(steps, na.rm = TRUE))
+#Finding the interval with most steps taken
+maxsteps <- max(stepsday$stepaverage, na.rm = TRUE)
+maxsteptime <- stepsday$dailyinterval[maxsteps == stepsday$stepaverage]
+plot(stepsday$dailyinterval,
+     stepsday$stepaverage,
+     type="l",
+     main = "Average number of steps taken in each 5 minute interval",
+     xlab = "Time of day",
+     ylab = "Steps taken")
+abline(v=maxsteptime,col="red")
+maxsteptime <- strftime(maxsteptime, format="%H:%M")
+```
+
+The 5-minute interval starting at `r maxsteptime` contains the maximum number of steps of `r round(maxsteps,0)`.
+
+Overwriting interval with a minute based integer would have been easier, for example:
+
+```{r, eval=FALSE}
+stepsdate$interval <- stepsdate$interval%/%100 * 60 + stepsdate$interval%%100.
+```
 
 
+# Imputing missing values
 
-## What is the average daily activity pattern?
+There are `r sum(!complete.cases(stepsdate))` entries with missing values in the dataset out of a total of `r length(stepsdate$steps)` entries, or `r sprintf("%1.1f%%", 100*sum(!complete.cases(stepsdate))/length(stepsdate$steps))`.
 
+The assignemnt asks for a new dataset to be created with the missing data filled in. So I copy the variable *steps* to the variable *stepscompleted* in the data frame *stepsdate* and replace the missing values in *stepscompleted* with the average for the relevant period as stored in the data frame *stepsday*.
 
+```{r}
+stepsdate$stepscompleted <- stepsdate$steps
+repairindex <- is.na(stepsdate$stepscompleted)
+repairinterval <- match(stepsdate$dailyinterval[repairindex], stepsday$dailyinterval)
+stepsdate$stepscompleted[repairindex] <- stepsday$stepaverage[repairinterval]
+```
 
-## Imputing missing values
+Now using the data with NA replaced by the mean in the correponding time interval, I draw the histogram of the total number of steps taken each day and calculate the mean and median:
 
+```{r}
+stepsdaycompleted <- ddply(stepsdate, "date", summarize,
+                        stepscompletedcount = sum(stepscompleted, na.rm = TRUE))
+meanstepscompleted = round(mean(stepsdaycompleted$stepscompletedcount), 1)
+medianstepscompleted = round(median(stepsdaycompleted$stepscompletedcount), 1)
+hist(stepsdaycompleted$stepscompletedcount,
+     main = "Total number of steps taken each day NA replaced by mean",
+     xlab = "Total number of steps",
+     ylab = "Frequency",
+     col = "grey90")
+abline(v=meanstepscompleted,col="red")
+abline(v=medianstepscompleted,col="green", lty=2)
+legend("topright",
+       c("total number of steps",
+         paste("mean ",meanstepscompleted),
+         paste("median",medianstepscompleted)),
+       col = c("black", "red", "green"),
+       lty = c(0, 1, 1),
+       lwd = c(0, 1, 1),
+       pch = c(22, NA, NA),
+       pt.bg = c("grey90", NA, NA),
+       pt.cex = c(3, NA, NA),
+       pt.lw = c(1.1, NA, NA),
+       bty="n")
+```
 
+The mean function changed from `r meansteps` to `r as.character(meanstepscompleted)` and the median function from `r mediansteps` to `r as.character(medianstepscompleted)`. Both mean and median are now the same. The shape of the distribution changed with the bucket containing fewest steps decreasing the most.
 
-## Are there differences in activity patterns between weekdays and weekends?
+*Note: why I needed to add as.character to meanstepscompleted and medianstepscompleted in order to display those two numbers correctly in the above paragraph is a mistery as without it the numbers are diplayed unrounded in scientific notation even though they are correctly formatted in the graph amd as mediansteps is displayed properly.*
+
+# Are there differences in activity patterns between weekdays and weekends?
+
+I will use the weekdays() function on the dataset with the filled-in missing values and create a new factor variable *daytype* in the dataset with two levels - "weekday" and "weekend" - indicating whether a given date is a weekday or weekend day.
+
+```{r}
+stepsdate$daytype <- weekdays(stepsdate$date)
+stepsdate$daytype[which(!(stepsdate$daytype %in% c("Saturday", "Sunday")))] <- "weekday"
+stepsdate$daytype[which(stepsdate$daytype %in% c("Saturday", "Sunday"))] <- "weekend"
+```
+
+And now the panel plot containing a time series plot of the 5-minute interval (x-axis) and the average number of steps taken, averaged across all weekday days or weekend days (y-axis). I wanted to use ggplot2, so had to load scales as well to allow for a formatting of the x axis which allowed to remove the date (which shows up in ggplot2 but not in plot).
+
+```{r}
+library(ggplot2)
+library(scales) # Daily interval as time without date
+
+stepsdaytype <- ddply(stepsdate, c("dailyinterval", "daytype"), summarize,
+                        meanstepcount = sum(steps, na.rm = TRUE))
+
+ggplot(stepsdaytype, aes(x = dailyinterval, y = meanstepcount, group = daytype)) +
+        scale_x_datetime(labels = date_format("%H:%M")) +
+        geom_line(colour = "blue") +
+        facet_wrap( ~ daytype, ncol = 1) +
+        ggtitle("Weekday and weekend number of steps taken per 5 minute interval")
+```
+
